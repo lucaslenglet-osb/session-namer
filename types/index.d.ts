@@ -16,6 +16,8 @@ declare module 'claude-code' {
       lastCall: Spend | null
       /** All calls of the session, including those that showed nothing. */
       total: Spend
+      /** Automatic suggestions turned off for this session (Stop, /rs stop). */
+      isStopped: boolean
     }
   }
 }

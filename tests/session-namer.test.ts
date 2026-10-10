@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { CommandRunInput, On, RenderElement } from 'claude-code'
+import type { TestBody } from 'claude-code/testing'
 
 import { addUsage, constraints, DEFAULT_TEMPLATE, dollars, formatName, NO_SPEND, spendText, parseVerdict, projectCode, transcript } from '../hooks/naming'
 
@@ -129,6 +130,10 @@ function world(on: On, haiku: () => string) {
   return { asked, renamed }
 }
 
+/** The band as drawn above the prompt. */
+const mountBand = ($: Parameters<TestBody>[0], surface: 'terminal' | 'desktop' = 'terminal') =>
+  $.ui.mount({ plugin: 'session-namer', surface, component: 'AbovePrompt', props: BAND })
+
 const USAGE = { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
 const RUN = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as unknown as Pick<CommandRunInput, 'origin' | 'presentation'>
 const TURN = { answer: 'Fait.', durationMs: 10, isAborted: false, turnId: 't', reason: 'answer' } as const
@@ -142,8 +147,8 @@ test('/rs shows 3 names, a click renames and hides the band', async ($, on) => {
   expect(asked[0]).toContain('CURRENT NAME: (none)')
   expect(asked[0]).toContain('- desc: at least 2 words and at most 5 words')
 
-  const ui = await $.ui.mount({ plugin: 'session-namer', surface: 'terminal', component: 'AbovePrompt', props: BAND })
-  expect(await ui.findAll({ type: 'Button' })).toHaveLength(4)
+  const ui = await mountBand($)
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(6)
   await ui.press({ key: 'pick-0' })
   expect(renamed).toEqual(['feat/clmod-mod: implement session namer'])
   expect(await ui.find({ key: 'pick-0' })).toBeUndefined()
@@ -153,8 +158,7 @@ test('after each reply: suggests, then stays quiet until the subject changes', a
   const clock = mock.clock(on)
   let same = false
   const { asked } = world(on, () => HAIKU.replace('"sameSubject":false', `"sameSubject":${same}`))
-  const band = () =>
-    $.ui.mount({ plugin: 'session-namer', surface: 'desktop', component: 'AbovePrompt', props: BAND })
+  const band = () => mountBand($, 'desktop')
 
   // 1st turn, no name yet: the band appears.
   await $.turn.complete(TURN)
@@ -253,7 +257,7 @@ test('the cost is shown in /rs, the band and /rs help, and counts every call', a
   const out = await $.command.run({ command: 'rs', args: '', ...RUN })
   expect(out.text).toContain('Cost: ≈<$0.0001 (2 tokens) · this session: ≈<$0.0001 (2 tokens, 1 call)')
 
-  const ui = await $.ui.mount({ plugin: 'session-namer', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+  const ui = await mountBand($)
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')
   expect(texts).toContain('session ≈<$0.0001 (2 tokens, 1 call)')
 
@@ -270,11 +274,62 @@ test('the cost display can be turned off', { options: { showCost: false } }, asy
   world(on, () => HAIKU)
   const out = await $.command.run({ command: 'rs', args: '', ...RUN })
   expect(out.text).not.toContain('Cost:')
-  const ui = await $.ui.mount({ plugin: 'session-namer', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+  const ui = await mountBand($)
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text).join(' | ')
   expect(texts).not.toContain('session ≈')
-  expect(await ui.findAll({ type: 'Button' })).toHaveLength(4)
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(6)
   const help = await $.command.run({ command: 'rs', args: 'help', ...RUN })
   expect(help.text).toContain('Session name cost display    off')
   expect(help.text).toContain('This session: ≈<$0.0001 (2 tokens, 1 call)')
+})
+
+test('Reroll asks Haiku for names different from those shown', async ($, on) => {
+  let round = 0
+  const OTHER = JSON.stringify({ sameSubject: false, suggestions: [{ desc: 'design naming band' }] })
+  const { asked } = world(on, () => (round++ === 0 ? HAIKU : OTHER))
+  await $.command.run({ command: 'rs', args: '', ...RUN })
+  expect(asked[0]).not.toContain('ALREADY PROPOSED')
+
+  const ui = await mountBand($)
+  await ui.press({ key: 'reroll' })
+  expect(asked[1]).toContain('ALREADY PROPOSED (give different ones):\n- feat/clmod-mod: implement session namer')
+  const band = await mountBand($)
+  expect((await band.findAll({ type: 'Button' })).map(b => b.props.label)).toContain('clmod: design naming band')
+  expect(await band.find({ key: 'pick-1' })).toBeUndefined()
+
+  // /rs with the band shown also asks for different names.
+  await $.command.run({ command: 'rs', args: '', ...RUN })
+  expect(asked[2]).toContain('- clmod: design naming band')
+})
+
+test('Stop turns automatic suggestions off for the session; /rs start turns them back on', async ($, on) => {
+  const clock = mock.clock(on)
+  const { asked } = world(on, () => HAIKU)
+  const band = () => mountBand($)
+
+  await $.turn.complete(TURN)
+  await clock.advance(1)
+  await (await band()).press({ key: 'stop' })
+  expect(await (await band()).find({ key: 'pick-0' })).toBeUndefined()
+
+  // Stopped: no Haiku call after a reply.
+  await $.turn.complete(TURN)
+  await clock.advance(1)
+  expect(asked).toHaveLength(1)
+  expect((await $.command.run({ command: 'rs', args: 'help', ...RUN })).text).toContain('(now: stopped)')
+
+  // /rs still works on demand, and says it is stopped.
+  const out = await $.command.run({ command: 'rs', args: '', ...RUN })
+  expect(out.text).toContain('Automatic suggestions are stopped')
+  await (await band()).press({ key: 'dismiss' })
+
+  await $.command.run({ command: 'rs', args: 'start', ...RUN })
+  await $.turn.complete(TURN)
+  await clock.advance(1)
+  expect(asked).toHaveLength(3)
+
+  await $.command.run({ command: 'rs', args: 'stop', ...RUN })
+  await $.turn.complete(TURN)
+  await clock.advance(1)
+  expect(asked).toHaveLength(3)
 })

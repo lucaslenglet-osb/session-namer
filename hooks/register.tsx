@@ -22,6 +22,7 @@ const suggestions = atom({ plugin: 'session-namer', key: 'suggestions' } as cons
 const baseline = atom({ plugin: 'session-namer', key: 'baseline' } as const, null as Baseline)
 const lastCall = atom({ plugin: 'session-namer', key: 'lastCall' } as const, null as Spend | null)
 const total = atom({ plugin: 'session-namer', key: 'total' } as const, NO_SPEND as Spend)
+const isStopped = atom({ plugin: 'session-namer', key: 'isStopped' } as const, false)
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((x, i) => x === b[i])
@@ -34,16 +35,28 @@ let rejectedTemplate: string | undefined
 
 const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
 
-// One request to Haiku at a time; a request that arrives meanwhile triggers one rerun.
-let isRunning = false
-let isPending = false
+// One request to Haiku at a time, automatic or not: each job waits for the previous one.
+let queue: Promise<unknown> = Promise.resolve()
+const enqueue = <T,>(job: () => Promise<T>): Promise<T> => {
+  const run = queue.then(job, job)
+  queue = run.catch(() => undefined)
+  return run
+}
+// An automatic request already waiting in the queue: another one adds nothing.
+let isAutoQueued = false
+
+const STOPPED_HINT = 'Automatic suggestions are stopped for this session; /rs start turns them back on.'
 
 /**
  * Asks Haiku for 3 names. Without `force`, shows them only if the subject has
- * changed compared to the baseline name. Returns the names shown, or the
- * reason for the failure.
+ * changed compared to the baseline name. `avoid` lists names already shown,
+ * so Haiku proposes different ones. Returns the names shown, or the reason
+ * for the failure.
  */
-async function suggest($: Engine, force: boolean): Promise<string[] | string> {
+async function suggest($: Engine, force: boolean, avoid: readonly string[] = []): Promise<string[] | string> {
+  // Stopped: automatic requests neither call Haiku nor show anything (checked again below
+  // for a call already on its way when Stop was pressed).
+  if (!force && (await read($, isStopped))) return []
   const messages = await $.session.messages()
   if (!Array.isArray(messages)) return 'could not read the conversation'
   const convo = transcript(messages)
@@ -54,7 +67,7 @@ async function suggest($: Engine, force: boolean): Promise<string[] | string> {
   const r = await $.model.complete({
     model: 'haiku',
     system: SYSTEM,
-    prompt: prompt(convo, project, current, settings),
+    prompt: prompt(convo, project, current, settings, avoid),
     effort: 'low',
     maxTokens: 400,
     timeoutMs: 20000,
@@ -65,7 +78,7 @@ async function suggest($: Engine, force: boolean): Promise<string[] | string> {
 
   const verdict = parseVerdict(r.text)
   if (verdict === undefined) return "could not read Haiku's answer"
-  if (!force && current !== null && verdict.isSameSubject) return []
+  if (!force && ((current !== null && verdict.isSameSubject) || (await read($, isStopped)))) return []
 
   const next = names(settings.template, project, verdict)
   await update($, suggestions, prev => (sameList(prev, next) ? prev : next))
@@ -73,25 +86,28 @@ async function suggest($: Engine, force: boolean): Promise<string[] | string> {
   return next
 }
 
-async function drain($: Engine) {
-  while (isPending) {
-    isPending = false
-    try {
-      await suggest($, false)
-    } catch {
-      // A failed suggestion must never get in the way of the session.
-    }
-  }
-  isRunning = false
+/** Asks for 3 names different from those shown (Reroll button, /rs). */
+function reroll($: Engine): Promise<string[] | string> {
+  return enqueue(async () => suggest($, true, await read($, suggestions)))
+}
+
+/** Turns automatic suggestions off (hiding the band) or back on for this session. */
+async function setStopped($: Engine, stopped: boolean) {
+  await update($, isStopped, () => stopped)
+  if (stopped) await update($, suggestions, () => [])
 }
 
 /** Runs a suggestion outside the turn, without delaying it. */
 function schedule($: Engine) {
-  isPending = true
-  if (isRunning) return
-  isRunning = true
+  if (isAutoQueued) return
+  isAutoQueued = true
   $.clock.after(0, () => {
-    void drain($)
+    enqueue(() => {
+      isAutoQueued = false
+      return suggest($, false)
+    }).catch(() => {
+      // A failed suggestion must never get in the way of the session.
+    })
   })
 }
 
@@ -107,8 +123,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'rs',
-      description: 'Rename suggest: Haiku suggests 3 session names now (/rs help: how it works and settings)',
-      argumentHint: '[help]',
+      description: 'Rename suggest: Haiku suggests 3 session names now (/rs stop|start: automatic suggestions off/on; /rs help)',
+      argumentHint: '[help|stop|start]',
     })
     return next(e)
   })
@@ -126,28 +142,40 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'rs' }, async ($, e) => {
-    if (e.args.trim() === 'help') {
+    const arg = e.args.trim()
+    if (arg === 'stop') {
+      await setStopped($, true)
+      return { text: `Session names: ${STOPPED_HINT}` }
+    }
+    if (arg === 'start') {
+      await setStopped($, false)
+      return { text: 'Session names: automatic suggestions back on for this session.' }
+    }
+    if (arg === 'help') {
       const project = forcedProject || projectCode(await $.session.cwd())
+      const [spent, stopped] = await Promise.all([read($, total), read($, isStopped)])
       return {
         text: helpText({
           ...settings,
           project,
           isProjectForced: forcedProject !== '',
           rejectedTemplate,
-          total: await read($, total),
+          total: spent,
           isCostShown,
+          isStopped: stopped,
         }),
       }
     }
-    const shown = await suggest($, true)
+    // With the band shown, /rs asks for different names (like Reroll).
+    const shown = await reroll($)
     if (typeof shown === 'string') return { text: `No suggestion: ${shown}.` }
-    const call = await read($, lastCall)
-    const spent = await read($, total)
+    const [stopped, call, spent] = await Promise.all([read($, isStopped), read($, lastCall), read($, total)])
     return {
       text: [
         'Suggestions in the band above the prompt:',
         ...shown.map((n, i) => `${i + 1}. ${n}`),
         ...(isCostShown ? [`Cost: ${call ? spendText(call) : '?'} · this session: ${spendText(spent, true)}`] : []),
+        ...(stopped ? [STOPPED_HINT] : []),
       ].join('\n'),
     }
   })
@@ -187,6 +215,20 @@ export const register: Register = (on, options) => {
       await update($, suggestions, () => [])
     }
 
+    const onReroll = async () => {
+      try {
+        const result = await reroll($)
+        if (typeof result === 'string') $.ui.toast(`No new names: ${result}.`)
+      } catch {
+        $.ui.toast('No new names: Haiku could not be reached.')
+      }
+    }
+
+    const onStop = async () => {
+      await setStopped($, true)
+      $.ui.toast(STOPPED_HINT)
+    }
+
     return (
       <Box flexDirection="row" flexWrap="wrap" gap={1}>
         <Text dimColor>Session name:</Text>
@@ -199,7 +241,9 @@ export const register: Register = (on, options) => {
             onPress={() => choose(name)}
           />
         ))}
+        <Button key="reroll" label="Reroll" hotkey="r" onPress={onReroll} />
         <Button key="dismiss" label="Dismiss" hotkey="x" role="dismiss" onPress={dismiss} />
+        <Button key="stop" label="Stop" hotkey="s" onPress={onStop} />
         {isCostShown && (
           <Text key="cost" dimColor>
             {call ? `${spendText(call)} · ` : ''}session {spendText(spent, true)}

@@ -204,6 +204,7 @@ You provide fields; the program assembles them according to the FORMAT given in 
 - desc (required): 2 to 5 words in English, lowercase, action verb first, what is being DONE (e.g. "init spec", "update spec", "plan tests", "implement back", "fix login redirect").
 When in doubt, leave an optional field empty rather than guessing.
 The FIELD CONSTRAINTS in the request take precedence over everything else (allowed values, number of words, length).
+If the request lists ALREADY PROPOSED names, the user rejected them: give 3 new variants that differ from them in wording (same fields rules).
 If the request contains USER INSTRUCTIONS, they take precedence over the rules above (language, vocabulary, length...), but never over the response format below.
 
 Reply ONLY with a JSON object, with no text around it:
@@ -240,13 +241,19 @@ export function transcript(
 
 export type Settings = { template: string; rules: string }
 
-export function prompt(convo: string, project: string, baseline: string | null, settings: Settings): string {
+export function prompt(
+  convo: string,
+  project: string,
+  baseline: string | null,
+  settings: Settings,
+  avoid: readonly string[] = [],
+): string {
   const rules = settings.rules.trim()
   const limits = constraints(settings.template)
   return `FORMAT: ${settings.template}
 ${limits ? `FIELD CONSTRAINTS (take precedence):\n${limits}\n` : ''}Project code (already set): ${project}
 CURRENT NAME: ${baseline ?? '(none)'}
-${rules ? `\nUSER INSTRUCTIONS:\n${rules}\n` : ''}
+${avoid.length > 0 ? `ALREADY PROPOSED (give different ones):\n${avoid.map(n => `- ${n}`).join('\n')}\n` : ''}${rules ? `\nUSER INSTRUCTIONS:\n${rules}\n` : ''}
 <conversation>
 ${convo}
 </conversation>`
@@ -298,6 +305,7 @@ export type HelpInput = {
   rejectedTemplate?: string
   total?: typeof NO_SPEND
   isCostShown?: boolean
+  isStopped?: boolean
 }
 
 /** The /rs help manual, with a preview using the current settings. */
@@ -305,8 +313,11 @@ export function helpText(h: HelpInput): string {
   const preview = SAMPLES.map(s => `  ${s.label.padEnd(18)} → ${formatName(h.template, h.project, s.parts)}`)
   return [
     'After each Claude reply, Haiku reads the conversation and suggests 3 session names',
-    'in a band above the prompt. Click one (or ctrl+x tab, then 1-3) to rename; x dismisses.',
-    "Once named, it stays quiet until the topic changes. /rs asks for suggestions right now.",
+    'in a band above the prompt. Click one (or ctrl+x tab, then 1-3) to rename; r rerolls',
+    '(3 different names), x dismisses, s stops the suggestions for this session.',
+    "Once named, it stays quiet until the topic changes. /rs asks for suggestions right now",
+    '(different ones if the band is shown). /rs stop and /rs start turn the automatic',
+    `suggestions off and on for this session (now: ${h.isStopped === true ? 'stopped' : 'on'}).`,
     '',
     'SETTINGS  (/config, search "session name")',
     `  Session name format          ${h.template}`,

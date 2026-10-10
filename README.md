@@ -5,10 +5,10 @@ A [Claude Code](https://claude.com/claude-code) mod that suggests a name for you
 After each Claude reply, Haiku reads the conversation (your messages and Claude's text replies, no tool output) and suggests 3 names in a band above the prompt:
 
 ```
-Session name: [ feat/clmod-mod: implement session namer ] [ … ] [ … ] [ Dismiss ] ≈$0.0003 (2.6k tokens) · session …
+Session name: [ feat/clmod-mod: implement session namer ] [ … ] [ … ] [ Reroll ] [ Dismiss ] [ Stop ] ≈$0.0003 (2.6k tokens) · session …
 ```
 
-Click one to rename the session (`/rename`). Once a name is picked or dismissed, the band stays hidden until the topic of the conversation actually changes.
+Click one to rename the session (`/rename`). Once a name is picked or dismissed, the band stays hidden until the topic of the conversation actually changes. **Reroll** asks for 3 different names; **Stop** turns the suggestions off for the rest of the session.
 
 ## Install
 
@@ -24,8 +24,9 @@ Answer `y` to add the marketplace, pick a scope (user scope = every session), th
 
 | | |
 |---|---|
-| Band above the prompt | Click a name, or `ctrl+x tab` then `1`-`3`; `x` dismisses |
-| `/rs` | Ask for suggestions now |
+| Band above the prompt | Click a name, or `ctrl+x tab` then `1`-`3`; `r` rerolls, `x` dismisses, `s` stops for this session |
+| `/rs` | Ask for suggestions now (different ones if the band is shown); works even when stopped |
+| `/rs stop` / `/rs start` | Turn automatic suggestions off / back on for this session |
 | `/rs help` | How it works, your current settings and a live preview of the format |
 | `/rename …` | A manual rename is remembered too: no suggestion until the topic changes |
 
