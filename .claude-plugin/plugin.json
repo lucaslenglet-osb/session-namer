@@ -1,0 +1,44 @@
+{
+  "name": "session-namer",
+  "version": "0.6.0",
+  "description": "Suggests session names after each Claude reply (band above the prompt, /rs to force), following a configurable naming convention.",
+  "author": {
+    "name": "Lucas"
+  },
+  "homepage": "https://github.com/lucaslenglet/session-namer",
+  "repository": "https://github.com/lucaslenglet/session-namer",
+  "license": "MIT",
+  "keywords": [
+    "session",
+    "rename",
+    "naming",
+    "haiku"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "template": {
+      "type": "string",
+      "title": "Session name format",
+      "description": "How suggested names are built, e.g. {type}-{id}/{project}: {desc}. Syntax and live preview: /rs help",
+      "default": "{type:L}-{id}/{project:L:,5}-{kind:L}: {desc:L:w2,5}"
+    },
+    "rules": {
+      "type": "string",
+      "title": "Session name rules for Haiku",
+      "description": "Extra instructions for the AI that writes the names, e.g. \"description in French\". Empty = default rules. More: /rs help",
+      "default": ""
+    },
+    "project": {
+      "type": "string",
+      "title": "Session name project code",
+      "description": "Fixed value for {project}. Empty = derived from the folder name (ClaudeMods → clmod). More: /rs help",
+      "default": ""
+    },
+    "showCost": {
+      "type": "boolean",
+      "title": "Session name cost display",
+      "description": "Show the Haiku cost (last call and session total) in the band and in /rs. More: /rs help",
+      "default": true
+    }
+  }
+}

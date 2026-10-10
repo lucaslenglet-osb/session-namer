@@ -1,0 +1,16 @@
+{
+  "name": "session-namer",
+  "owner": {
+    "name": "lucaslenglet"
+  },
+  "metadata": {
+    "description": "session-namer: AI-suggested Claude Code session names following your naming convention"
+  },
+  "plugins": [
+    {
+      "name": "session-namer",
+      "source": "./",
+      "description": "Suggests session names after each Claude reply (band above the prompt, /rs to force), following a configurable naming convention."
+    }
+  ]
+}
