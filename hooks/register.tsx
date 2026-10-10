@@ -23,6 +23,10 @@ const baseline = atom({ plugin: 'session-namer', key: 'baseline' } as const, nul
 const lastCall = atom({ plugin: 'session-namer', key: 'lastCall' } as const, null as Spend | null)
 const total = atom({ plugin: 'session-namer', key: 'total' } as const, NO_SPEND as Spend)
 const isStopped = atom({ plugin: 'session-namer', key: 'isStopped' } as const, false)
+const isGenerating = atom({ plugin: 'session-namer', key: 'isGenerating' } as const, false)
+const frame = atom({ plugin: 'session-namer', key: 'frame' } as const, 0)
+
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 const sameList = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((x, i) => x === b[i])
@@ -54,9 +58,6 @@ const STOPPED_HINT = 'Automatic suggestions are stopped for this session; /rs st
  * for the failure.
  */
 async function suggest($: Engine, force: boolean, avoid: readonly string[] = []): Promise<string[] | string> {
-  // Stopped: automatic requests neither call Haiku nor show anything (checked again below
-  // for a call already on its way when Stop was pressed).
-  if (!force && (await read($, isStopped))) return []
   const messages = await $.session.messages()
   if (!Array.isArray(messages)) return 'could not read the conversation'
   const convo = transcript(messages)
@@ -78,6 +79,7 @@ async function suggest($: Engine, force: boolean, avoid: readonly string[] = [])
 
   const verdict = parseVerdict(r.text)
   if (verdict === undefined) return "could not read Haiku's answer"
+  // Stop pressed while this automatic call was on its way: show nothing.
   if (!force && ((current !== null && verdict.isSameSubject) || (await read($, isStopped)))) return []
 
   const next = names(settings.template, project, verdict)
@@ -86,9 +88,36 @@ async function suggest($: Engine, force: boolean, avoid: readonly string[] = [])
   return next
 }
 
+/** Runs `job` with the band's spinner turning. */
+async function spinning<T>($: Engine, job: () => Promise<T>): Promise<T> {
+  await update($, frame, () => 0)
+  await update($, isGenerating, () => true)
+  const tick = $.clock.every(100, () => {
+    void update($, frame, f => f + 1)
+  })
+  try {
+    return await job()
+  } finally {
+    tick.cancel()
+    await update($, isGenerating, () => false)
+  }
+}
+
 /** Asks for 3 names different from those shown (Reroll button, /rs). */
 function reroll($: Engine): Promise<string[] | string> {
-  return enqueue(async () => suggest($, true, await read($, suggestions)))
+  return enqueue(() => spinning($, async () => suggest($, true, await read($, suggestions))))
+}
+
+/**
+ * An automatic call is shown as generating only when its names will likely be
+ * shown: the band is already up, or the session has no name yet. Otherwise
+ * (same subject, the usual case) the band would flash after every reply.
+ */
+async function auto($: Engine): Promise<string[] | string> {
+  // Stopped: no Haiku call at all.
+  if (await read($, isStopped)) return []
+  const isAwaited = (await read($, suggestions)).length > 0 || (await read($, baseline)) === null
+  return isAwaited ? spinning($, () => suggest($, false)) : suggest($, false)
 }
 
 /** Turns automatic suggestions off (hiding the band) or back on for this session. */
@@ -104,7 +133,7 @@ function schedule($: Engine) {
   $.clock.after(0, () => {
     enqueue(() => {
       isAutoQueued = false
-      return suggest($, false)
+      return auto($)
     }).catch(() => {
       // A failed suggestion must never get in the way of the session.
     })
@@ -193,11 +222,23 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const shown = await read($, suggestions)
-    if (e.props.hasSurvey || shown.length === 0) return next(e)
-    const call = await read($, lastCall)
-    const spent = await read($, total)
+    const generating = await read($, isGenerating)
+    if (e.props.hasSurvey || (shown.length === 0 && !generating)) return next(e)
+    const spin = generating ? `${SPINNER[(await read($, frame)) % SPINNER.length]} generating names…` : ''
 
     const { Box, Button, Text } = $.ui.resolve(e)
+    if (shown.length === 0) {
+      return (
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>Session name:</Text>
+          <Text color="claude">
+            {spin}
+          </Text>
+        </Box>
+      )
+    }
+    const call = await read($, lastCall)
+    const spent = await read($, total)
 
     const choose = async (name: string) => {
       try {
@@ -241,7 +282,13 @@ export const register: Register = (on, options) => {
             onPress={() => choose(name)}
           />
         ))}
-        <Button key="reroll" label="Reroll" hotkey="r" onPress={onReroll} />
+        {generating ? (
+          <Text color="claude">
+            {spin}
+          </Text>
+        ) : (
+          <Button key="reroll" label="Reroll" hotkey="r" onPress={onReroll} />
+        )}
         <Button key="dismiss" label="Dismiss" hotkey="x" role="dismiss" onPress={dismiss} />
         <Button key="stop" label="Stop" hotkey="s" onPress={onStop} />
         {isCostShown && (

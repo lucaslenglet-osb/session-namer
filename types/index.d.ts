@@ -18,6 +18,10 @@ declare module 'claude-code' {
       total: Spend
       /** Automatic suggestions turned off for this session (Stop, /rs stop). */
       isStopped: boolean
+      /** Haiku is writing names the band waits for: the band shows a spinner. */
+      isGenerating: boolean
+      /** The spinner's current frame, advanced by a timer while generating. */
+      frame: number
     }
   }
 }

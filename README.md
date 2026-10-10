@@ -8,7 +8,7 @@ After each Claude reply, Haiku reads the conversation (your messages and Claude'
 Session name: [ feat/clmod-mod: implement session namer ] [ … ] [ … ] [ Reroll ] [ Dismiss ] [ Stop ] ≈$0.0003 (2.6k tokens) · session …
 ```
 
-Click one to rename the session (`/rename`). Once a name is picked or dismissed, the band stays hidden until the topic of the conversation actually changes. **Reroll** asks for 3 different names; **Stop** turns the suggestions off for the rest of the session.
+Click one to rename the session (`/rename`). Once a name is picked or dismissed, the band stays hidden until the topic of the conversation actually changes. **Reroll** asks for 3 different names; **Stop** turns the suggestions off for the rest of the session. While names are being written, a spinner turns in the band (`⠹ generating names…`): on a reroll, on `/rs`, and after a reply when the band is already up or the session has no name yet.
 
 ## Install
 

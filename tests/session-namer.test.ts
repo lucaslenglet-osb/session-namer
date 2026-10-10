@@ -107,7 +107,7 @@ test('transcript keeps the first message and the end within the budget', () => {
 })
 
 /** What sits beneath the mod: the conversation, the folder, Haiku, /rename, the empty band. */
-function world(on: On, haiku: () => string) {
+function world(on: On, haiku: () => string, wait: () => Promise<void> = async () => undefined) {
   const asked: string[] = []
   const renamed: string[] = []
   on('session.messages', () => ({
@@ -117,8 +117,9 @@ function world(on: On, haiku: () => string) {
     ],
   }))
   on('session.cwd', () => ({ value: '/home/lucas/Dev/ClaudeMods' }))
-  on('model.complete', ($, e) => {
+  on('model.complete', async ($, e) => {
     asked.push(e.prompt)
+    await wait()
     return { value: { isAnswered: true, text: haiku(), usage: USAGE } }
   })
   on('command.run', { command: 'rename' }, ($, e) => {
@@ -332,4 +333,26 @@ test('Stop turns automatic suggestions off for the session; /rs start turns them
   await $.turn.complete(TURN)
   await clock.advance(1)
   expect(asked).toHaveLength(3)
+})
+
+test('the band shows a spinner while names are being generated', async ($, on) => {
+  const clock = mock.clock(on)
+  let release = () => {}
+  const gate = new Promise<void>(r => (release = r))
+  world(on, () => HAIKU, () => gate)
+
+  // First reply, no name yet: the band waits for names.
+  await $.turn.complete(TURN)
+  await clock.advance(1)
+  const spinner = async () =>
+    (await (await mountBand($)).findAll({ type: 'Text' })).map(t => t.text).find(t => t.includes('generating')) ?? ''
+  expect(await spinner()).toContain('generating names…')
+  const first = await spinner()
+  await clock.advance(100)
+  expect(await spinner()).not.toBe(first)
+
+  release()
+  await clock.advance(1)
+  expect(await spinner()).toBe('')
+  expect(await (await mountBand($)).find({ key: 'reroll' })).toBeDefined()
 })
